@@ -70,7 +70,7 @@ def circle(n):
 def highlight_text(text, issues):
     replacements = []
     for i, issue in enumerate(issues, 1):
-        phrase = issue.get("original", "").strip().strip("\"'""''")
+        phrase = issue.get("original", "").strip().strip("\"'\u201c\u201d\u2018\u2019")
         if not phrase:
             continue
         start = 0
@@ -79,23 +79,31 @@ def highlight_text(text, issues):
             if idx == -1:
                 break
             end = idx + len(phrase)
-            if not any(s <= idx < e or s < end <= e for s, e, _, _ in replacements):
-                replacements.append((idx, end, i, issue.get("type", "기타")))
+            if not any(s <= idx < e or s < end <= e for s, e, _, _, _ in replacements):
+                replacements.append((idx, end, i, issue.get("type", "기타"), issue))
                 break
             start = idx + 1
 
     replacements.sort(key=lambda x: x[0], reverse=True)
     result = text
-    for s, e, num, type_ in replacements:
+    for s, e, num, type_, issue in replacements:
         st_ = TYPE_STYLE.get(type_, {"border": "#aaa", "bg": "#f0f0f0"})
         c = circle(num)
+        problem = issue.get("problem", "").replace('"', "&quot;")
+        suggestion = issue.get("suggestion", "").replace('"', "&quot;")
         result = (
             result[:s]
-            + f'<mark style="background:{st_["bg"]}; border-bottom:2px solid {st_["border"]}; '
-              f'border-radius:3px; padding:1px 3px;">'
+            + f'<span class="hl-wrap" tabindex="0">'
+            + f'<mark style="background:{st_["bg"]}; border-bottom:2px solid {st_["border"]}; border-radius:3px; padding:1px 3px; cursor:pointer;">'
             + result[s:e]
             + f'<sup style="color:{st_["border"]}; font-weight:bold; font-size:0.8em; margin-left:1px;">{c}</sup>'
             + '</mark>'
+            + f'<div class="hl-tooltip" style="border-color:{st_["border"]};">'
+            + f'<span style="background:{st_["badge"]}; color:white; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:bold;">{c} {type_}</span>'
+            + f'<p style="margin:8px 0 4px; color:#333; font-size:13px;">{problem}</p>'
+            + f'<p style="margin:0; color:#555; font-size:12px;">→ {suggestion}</p>'
+            + '</div>'
+            + '</span>'
             + result[e:]
         )
     return result.replace("\n", "<br>")
@@ -115,7 +123,6 @@ def run_correction(text):
             raw = raw[4:]
     return json.loads(raw)
 
-# ── 페이지 설정 ───────────────────────────────────────────────
 st.set_page_config(page_title="시내글방 교정기", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
@@ -123,34 +130,15 @@ st.markdown("""
     #MainMenu, footer, header { visibility: hidden; }
     .block-container { padding-top: 1.8rem; padding-bottom: 2rem; }
     h1 { font-size: 1.5rem !important; margin-bottom: 0.1rem !important; }
-
-    /* 복붙 방지 */
-    .no-select {
-        -webkit-user-select: none;
-        -moz-user-select: none;
-        -ms-user-select: none;
-        user-select: none;
-    }
-    .issue-card {
-        padding: 13px 16px; margin: 8px 0; border-radius: 8px;
-        border-left: 5px solid; line-height: 1.65;
-    }
-    .badge {
-        display: inline-block; color: white; padding: 2px 10px;
-        border-radius: 12px; font-size: 12px; font-weight: bold; margin-bottom: 8px;
-    }
-    .original-quote {
-        font-style: italic; background: rgba(0,0,0,0.07);
-        padding: 2px 7px; border-radius: 4px;
-    }
-    .overall-box {
-        background: #f8f9fa; border: 1px solid #dee2e6; padding: 18px 22px;
-        border-radius: 8px; line-height: 1.85; color: #222; white-space: pre-wrap;
-    }
-    .text-display {
-        height: 520px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 8px;
-        padding: 18px 20px; background: white; line-height: 2; font-size: 0.95rem; color: #222;
-    }
+    .no-select { -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; user-select:none; }
+    .issue-card { padding:13px 16px; margin:8px 0; border-radius:8px; border-left:5px solid; line-height:1.65; }
+    .badge { display:inline-block; color:white; padding:2px 10px; border-radius:12px; font-size:12px; font-weight:bold; margin-bottom:8px; }
+    .original-quote { font-style:italic; background:rgba(0,0,0,0.07); padding:2px 7px; border-radius:4px; }
+    .overall-box { background:#f8f9fa; border:1px solid #dee2e6; padding:18px 22px; border-radius:8px; line-height:1.85; color:#222; white-space:pre-wrap; }
+    .text-display { height:520px; overflow-y:auto; border:1px solid #e0e0e0; border-radius:8px; padding:18px 20px; background:white; line-height:2; font-size:0.95rem; color:#222; }
+    .hl-wrap { position:relative; display:inline; outline:none; }
+    .hl-tooltip { display:none; position:absolute; top:calc(100% + 6px); left:0; background:white; border:2px solid; border-radius:10px; padding:10px 13px; width:230px; z-index:999; box-shadow:0 4px 16px rgba(0,0,0,0.13); line-height:1.5; }
+    .hl-wrap:focus-within .hl-tooltip { display:block; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -158,7 +146,6 @@ if not API_KEY:
     st.error("서비스 준비 중입니다. 잠시 후 다시 시도해주세요.")
     st.stop()
 
-# ── 입장 코드 확인 ────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -167,9 +154,7 @@ if not st.session_state.authenticated:
     with col:
         st.markdown("## 시내글방 교정기")
         st.markdown("<br>", unsafe_allow_html=True)
-        code = st.text_input("수업 코드", type="password",
-                             placeholder="선생님께 받은 코드를 입력하세요",
-                             label_visibility="collapsed")
+        code = st.text_input("수업 코드", type="password", placeholder="선생님께 받은 코드를 입력하세요", label_visibility="collapsed")
         if st.button("입장하기", type="primary", use_container_width=True):
             if code == ACCESS_CODE:
                 st.session_state.authenticated = True
@@ -178,25 +163,18 @@ if not st.session_state.authenticated:
                 st.error("코드가 맞지 않아요.")
     st.stop()
 
-# ── 세션 상태 ─────────────────────────────────────────────────
 for k, v in {"result": None, "input_text": ""}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── 헤더 ─────────────────────────────────────────────────────
 st.markdown("# 시내글방 교정기")
 st.caption("글을 붙여넣고 교정하기를 누르면 항목별로 하나씩 보여드려요.")
 
-# ── 본문 ──────────────────────────────────────────────────────
 left, right = st.columns([1, 1], gap="large")
 
 with left:
     if st.session_state.result is None:
-        text_input = st.text_area(
-            "원고", height=520,
-            placeholder="여기에 글을 붙여넣으세요...",
-            label_visibility="visible",
-        )
+        text_input = st.text_area("원고", height=520, placeholder="여기에 글을 붙여넣으세요...", label_visibility="visible")
         if st.button("교정하기  →", type="primary", use_container_width=True):
             if not text_input.strip():
                 st.warning("글을 붙여넣어 주세요.")
@@ -212,13 +190,10 @@ with left:
                     except Exception as e:
                         st.error(f"오류: {e}")
     else:
-        st.markdown("**원고** (교정 항목 표시)")
+        st.markdown("**원고** (교정 항목 표시 — 클릭하면 설명)")
         issues = st.session_state.result.get("issues", [])
         highlighted = highlight_text(st.session_state.input_text, issues)
-        st.markdown(
-            f'<div class="text-display no-select">{highlighted}</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<div class="text-display no-select">{highlighted}</div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("← 다시 입력하기", use_container_width=True):
             st.session_state.result = None
@@ -249,7 +224,4 @@ with right:
         if overall:
             st.markdown("---")
             st.markdown("**전체 피드백**")
-            st.markdown(
-                f'<div class="overall-box no-select">{overall}</div>',
-                unsafe_allow_html=True
-            )
+            st.markdown(f'<div class="overall-box no-select">{overall}</div>', unsafe_allow_html=True)
